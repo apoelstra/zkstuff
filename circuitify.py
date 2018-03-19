@@ -113,6 +113,7 @@ class Linear:
 
 temp_count = 0
 mul_count = 0
+bit_count = 0
 mul_data = []
 cache = dict()
 varset = dict()
@@ -168,7 +169,7 @@ def new_temp(val):
 def new_const(val):
     return Linear(val, val)
 
-def new_multiplication(l, r):
+def new_multiplication(l, r, addeqs=True):
     global cache
     global eqs
     global varset
@@ -189,8 +190,9 @@ def new_multiplication(l, r):
 #            varset[var] = rv
     assert(l.get_real() == lv.get_real())
     assert(r.get_real() == rv.get_real())
-    eqs.append(l - lv)
-    eqs.append(r - rv)
+    if addeqs:
+        eqs.append(l - lv)
+        eqs.append(r - rv)
     cache[key] = ret
     return ret
 
@@ -223,6 +225,9 @@ def parse_expression(s):
     global cache
     global eqs
     global varset
+    global mul_count
+    global bit_count
+    global mul_data
     s = clean_expr(s)
     if s == "":
         raise Exception("Empty expression")
@@ -259,8 +264,9 @@ def parse_expression(s):
             return new_division(l, r)
     if len(s) > 5 and s[:5] == 'bool(':
         ret = parse_expression(s[4:])
-        m = new_multiplication(ret, ret - new_const(1))
-        eqs.append(m)
+        mul_count += 1
+        bit_count += 1
+        mul_data.append((ret.get_real(), (ret.get_real() - 1) % MODULUS, 0))
         return ret
     if s[0] == '-':
         return parse_expression(s[1:]) * (MODULUS - 1)
@@ -367,7 +373,8 @@ def pivot_variable(eqs, vnam, eliminate=False):
 def encode_andytoshi_format():
     global eqs
     global mul_count
-    ret = "%i,0,%i;" % (1<<(mul_count-1).bit_length(), len(eqs))
+    global bit_count
+    ret = "%i,0,%i,%i;" % (1<<(mul_count-1).bit_length(), bit_count, len(eqs))
     for eq in eqs:
         assert(eq.get_real() == 0)
         for pos, (name, val) in enumerate(eq.var.items()):
