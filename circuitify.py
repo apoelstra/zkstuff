@@ -61,7 +61,8 @@ class Linear:
 
     def __str__(self):
         terms = []
-        for (name, val) in self.var.items():
+        for ((ty, idx), val) in self.var.items():
+            name = "%s%d" % (ty, idx)
             if val == 1:
                 terms.append(name)
             elif (val + 1) % MODULUS == 0:
@@ -156,13 +157,13 @@ def new_mul(vall, valr):
     global mul_count
     global mul_data
     mul_data.append((vall % MODULUS, valr % MODULUS, (vall * valr) % MODULUS))
-    ret = (Linear(vall, 0, ("L%i" % mul_count, 1)), Linear(valr, 0, ("R%i" % mul_count, 1)), Linear(vall * valr, 0, ("O%i" % mul_count, 1)))
+    ret = (Linear(vall, 0, (("L", mul_count), 1)), Linear(valr, 0, (("R", mul_count), 1)), Linear(vall * valr, 0, (("O", mul_count), 1)))
     mul_count += 1
     return ret
 
 def new_temp(val):
     global temp_count
-    ret = Linear(val, 0, ("T%i" % temp_count, 1))
+    ret = Linear(val, 0, (("T", temp_count), 1))
     temp_count += 1
     return ret
 
@@ -190,8 +191,8 @@ def new_multiplication(l, r, addeqs=True):
 #            varset[var] = rv
     assert(l.get_real() == lv.get_real())
     assert(r.get_real() == rv.get_real())
+    eqs.append(l - lv)
     if addeqs:
-        eqs.append(l - lv)
         eqs.append(r - rv)
     cache[key] = ret
     return ret
@@ -264,9 +265,8 @@ def parse_expression(s):
             return new_division(l, r)
     if len(s) > 5 and s[:5] == 'bool(':
         ret = parse_expression(s[4:])
-        mul_count += 1
+        m = new_multiplication(ret, ret - new_const(1), False)
         bit_count += 1
-        mul_data.append((ret.get_real(), (ret.get_real() - 1) % MODULUS, 0))
         return ret
     if s[0] == '-':
         return parse_expression(s[1:]) * (MODULUS - 1)
@@ -377,7 +377,7 @@ def encode_andytoshi_format():
     ret = "%i,0,%i,%i;" % (1<<(mul_count-1).bit_length(), bit_count, len(eqs))
     for eq in eqs:
         assert(eq.get_real() == 0)
-        for pos, (name, val) in enumerate(eq.var.items()):
+        for pos, ((ty, idx), val) in enumerate(eq.var.items()):
             ret += " "
             negative = False
             if val * 2 > MODULUS:
@@ -391,7 +391,7 @@ def encode_andytoshi_format():
                 ret += "+ "
             if val > 1:
                 ret += "%i*" % val
-            ret += name
+            ret += "%s%d" % (ty, idx)
         ret += " = "
         val = (MODULUS - eq.const) % MODULUS
         if val * 2 > MODULUS:
@@ -416,7 +416,7 @@ print("[%f] %i multiplications, %i temporaries, %i constraints, %i cost" % (time
 print("[%f] Eliminating..." % (time.clock() - start))
 tock = time.clock()
 for tnum in range(0, temp_count):
-    pivot_variable(eqs, "T%i" % tnum, True)
+    pivot_variable(eqs, ("T", tnum), True)
     now = time.clock()
     if (now - tock > 10):
         tock = now
@@ -433,7 +433,7 @@ for i in range(mul_count // 10):
         tock = now
         print("[%f] Reduced to %i cost (step %i/%i)" % (now - start, eqs_cost, i, mul_count // 10))
     for j in range(4):
-        vnam = random.choice(["L%i","R%i","O%i"]) % random.randrange(mul_count)
+        vnam = (random.choice(["L","R","O"]), random.randrange(mul_count))
         pivot_variable(neweqs, vnam)
         neweqs_cost = sum(eq.cost for eq in neweqs)
         if neweqs_cost < eqs_cost:
