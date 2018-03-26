@@ -1,11 +1,16 @@
 #!/usr/bin/python3
 
 import re
+import struct
 import sys
 import time
 import random
 
+SECRET_FILENAME="secret.dat"
+CIRCUIT_FILENAME="circuit.dat"
+
 MODULUS = 0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141
+HALFMODULUS = ((MODULUS + 1)/2)
 COST_SCALAR_MUL = 5
 COST_SCALAR_NEG = 2
 COST_SCALAR_COPY = 1
@@ -405,6 +410,22 @@ def encode_scalar_const(v):
     vals = [(v >> (32 * (7 - i))) & 0xFFFFFFFF for i in range(8)]
     return ("SECP256K1_SCALAR_CONST(0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x, 0x%08x)" % (vals[0], vals[1], vals[2], vals[3], vals[4], vals[5], vals[6], vals[7]))
 
+def encode_scalar_bin(s):
+    b = []
+    if s < 0:
+       raise Exception("lol")
+    if s > HALFMODULUS:
+        b.append(0x80)
+        s = MODULUS - s
+    else:
+        b.append(0x00)
+
+    while s > 0:
+        b.append(s % 0x100)
+        s >>= 8
+    b[0] |= (len(b) - 1)
+    return bytes(b)
+
 start = time.clock()
 print("[%f] Parsing..." % 0)
 for line in sys.stdin:
@@ -470,13 +491,55 @@ for idx, eq in enumerate(eqs):
 eqs = neweqs
 
 
-
 print("[%f] Done" % (time.clock() - start))
 print()
+
 print(encode_andytoshi_format())
 
-print()
-print("Secret inputs:")
-print("L = {%s}" % (", ".join(encode_scalar_const(mul_data[i][0]) for i in range(mul_count))))
-print("R = {%s}" % (", ".join(encode_scalar_const(mul_data[i][1]) for i in range(mul_count))))
-print("O = {%s}" % (", ".join(encode_scalar_const(mul_data[i][2]) for i in range(mul_count))))
+
+WL = [ [] for i in mul_data ]
+WR = [ [] for i in mul_data ]
+WO = [ [] for i in mul_data ]
+C = []
+
+for eqi, eq in enumerate(eqs):
+    for (ty, idx), val in eq.var.items():
+        if ty == "L":
+            W = WL
+        elif ty == "R":
+            W = WR
+        elif ty == "O":
+            W = WO
+        else:
+            raise Exception("unknown type %s" % ty)
+        W[idx].append((eqi, val))
+    C.append(eq.const)
+
+with open(SECRET_FILENAME, 'bw') as f:
+    # 2 bytes version (1), 2 bytes flags (0), 4 bytes n_commits (0), 8 bytes n_gates
+    f.write(struct.pack('<LLQ', 1, 0, mul_count))
+    for (l, _, _) in mul_data:
+        f.write(encode_scalar_bin(l))
+    for (_, r, _) in mul_data:
+        f.write(encode_scalar_bin(r))
+    for (_, _, o) in mul_data:
+        f.write(encode_scalar_bin(o))
+
+with open(CIRCUIT_FILENAME, 'bw') as f:
+    nextmulcount = 1 << (mul_count - 1).bit_length()
+    # 2 bytes version (1), 2 bytes flags (0), 4 bytes n_commits (0), 8 bytes n_gates, 8 bytes n_bits, 8 bytes n_constraints
+    f.write(struct.pack('<LLQQQ', 1, 0, nextmulcount, bit_count, len(eqs)))
+    for W in [WL, WR, WO]:
+        print ("%s" % W)
+        for col in W:
+            f.write(struct.pack('<H', len(col)))
+            for eqi, scalar in col:
+                f.write(struct.pack('<H', eqi))
+                f.write(encode_scalar_bin(scalar))
+    for c in C:
+        f.write(encode_scalar_bin(MODULUS - c % MODULUS))
+
+
+print("Wrote circuit to « %s »" % CIRCUIT_FILENAME)
+print("Wrote secret data to « %s »" % SECRET_FILENAME)
+
