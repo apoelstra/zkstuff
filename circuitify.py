@@ -120,6 +120,7 @@ class Linear:
 temp_count = 0
 mul_count = 0
 bit_count = 0
+commit_data = []
 mul_data = []
 cache = dict()
 varset = dict()
@@ -174,6 +175,12 @@ def new_temp(val):
 
 def new_const(val):
     return Linear(val, val)
+
+def new_commit(val):
+    global commit_data
+    ret = Linear(val, 0, (("V", len(commit_data)), 1))
+    commit_data.append(val)
+    return ret
 
 def new_multiplication(l, r, addeqs=True):
     global cache
@@ -273,6 +280,9 @@ def parse_expression(s):
         m = new_multiplication(ret, ret - new_const(1), False)
         bit_count += 1
         return ret
+    if len(s) > 7 and s[:7] == 'commit(':
+        ret = parse_expression(s[6:])
+        return new_commit(ret.get_real())
     if s[0] == '-':
         return parse_expression(s[1:]) * (MODULUS - 1)
     if VAR_RE.fullmatch(s):
@@ -461,7 +471,7 @@ for i in range(mul_count):
             eqs_cost = neweqs_cost
             break
 
-print("[%f] %i multiplications, %i constraints, %i cost" % (time.clock() - start, mul_count, len(eqs), eqs_cost))
+print("[%f] %i multiplications, %i commits, %i constraints, %i cost" % (time.clock() - start, mul_count, len(commit_data), len(eqs), eqs_cost))
 
 print("[%f] Maximizing 1s..." % (time.clock() - start))
 neweqs = eqs
@@ -500,6 +510,7 @@ print(encode_andytoshi_format())
 WL = [ [] for i in mul_data ]
 WR = [ [] for i in mul_data ]
 WO = [ [] for i in mul_data ]
+WV = [ [] for i in commit_data ]
 C = []
 
 for eqi, eq in enumerate(eqs):
@@ -510,27 +521,34 @@ for eqi, eq in enumerate(eqs):
             W = WR
         elif ty == "O":
             W = WO
+        elif ty == "V":
+            W = WV
         else:
             raise Exception("unknown type %s" % ty)
         W[idx].append((eqi, val))
     C.append(eq.const)
 
+print ("%s" % WV)
+print ("%s" % commit_data)
+
 with open(SECRET_FILENAME, 'bw') as f:
     # 2 bytes version (1), 2 bytes flags (0), 4 bytes n_commits (0), 8 bytes n_gates
-    f.write(struct.pack('<LLQ', 1, 0, mul_count))
+    f.write(struct.pack('<LLQ', 1, len(commit_data), mul_count))
     for (l, _, _) in mul_data:
         f.write(encode_scalar_bin(l))
     for (_, r, _) in mul_data:
         f.write(encode_scalar_bin(r))
     for (_, _, o) in mul_data:
         f.write(encode_scalar_bin(o))
+    for v in commit_data:
+        print("%s" % (encode_scalar_bin(v)))
+        f.write(encode_scalar_bin(v))
 
 with open(CIRCUIT_FILENAME, 'bw') as f:
     nextmulcount = 1 << (mul_count - 1).bit_length()
     # 2 bytes version (1), 2 bytes flags (0), 4 bytes n_commits (0), 8 bytes n_gates, 8 bytes n_bits, 8 bytes n_constraints
-    f.write(struct.pack('<LLQQQ', 1, 0, nextmulcount, bit_count, len(eqs)))
-    for W in [WL, WR, WO]:
-        print ("%s" % W)
+    f.write(struct.pack('<LLQQQ', 1, len(commit_data), nextmulcount, bit_count, len(eqs)))
+    for W in [WL, WR, WO, WV]:
         for col in W:
             f.write(struct.pack('<H', len(col)))
             for eqi, scalar in col:
