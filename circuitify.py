@@ -537,6 +537,8 @@ with open(CIRCUIT_FILENAME, 'bw') as f:
             for eqi, scalar in col:
                 f.write(struct.pack('<H', eqi))
                 f.write(encode_scalar_bin(scalar))
+        for i in range(mul_count, nextmulcount):
+            f.write(struct.pack('<H', 0))
     for c in C:
         f.write(encode_scalar_bin(MODULUS - c % MODULUS))
 
